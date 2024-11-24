@@ -25,22 +25,34 @@ function calcular() {
     // Máscara de subred
     const subnetMask = Array(32).fill(0).fill(1, 0, maskInt).join("").match(/.{1,8}/g).map(bin => parseInt(bin, 2));
     const subnetMaskString = subnetMask.join(".");
-    
-    // Hosts totales y saltos
-    const totalHosts = Math.pow(2, 32 - maskInt);
-    const jump = totalHosts;
-    const networkBase = ipParts.map((part, i) => part & subnetMask[i]);
 
-    const ranges = [];
-    for (let i = 0; i < 256; i += jump) {
-        const rangeStart = networkBase.slice(0, 3).concat(i);
-        ranges.push(rangeStart.join("."));
+    // Hosts totales, usable hosts y salto entre subredes
+    const totalHosts = Math.pow(2, 32 - maskInt);
+    const usableHosts = totalHosts > 2 ? totalHosts - 2 : 0; // Restar 2 si hay más de 2 hosts posibles
+    const subnetSize = totalHosts;
+
+    // Número de subredes
+    const numSubnets = Math.pow(2, maskInt % 8); // Número de subredes dentro del rango
+    const subnets = [];
+
+    // Calcular dirección de red base
+    const startAddressInt = ipToInteger(ipParts);
+
+    // Calcular todas las subredes
+    for (let i = 0; i < numSubnets; i++) {
+        const subnetStartInt = startAddressInt + i * subnetSize;
+        const subnetBroadcastInt = subnetStartInt + subnetSize - 1;
+
+        subnets.push({
+            start: integerToIp(subnetStartInt),
+            broadcast: integerToIp(subnetBroadcastInt),
+        });
     }
 
-    // Crear la tabla
-    let tabla = "<table><thead><tr><th>Subred</th></tr></thead><tbody>";
-    ranges.forEach(range => {
-        tabla += `<tr><td>${range}</td></tr>`;
+    // Crear tabla de subredes
+    let tabla = "<table><thead><tr><th>Subred</th><th>Broadcast</th></tr></thead><tbody>";
+    subnets.forEach(({ start, broadcast }) => {
+        tabla += `<tr><td>${start}</td><td>${broadcast}</td></tr>`;
     });
     tabla += "</tbody></table>";
 
@@ -48,8 +60,27 @@ function calcular() {
         <p>Clase: ${determineClass(ipParts[0])}</p>
         <p>Máscara de subred: ${subnetMaskString}</p>
         <p>Hosts totales: ${totalHosts}</p>
+        <p>Hosts utilizables: ${usableHosts}</p>
+        <p>Número de subredes: ${numSubnets}</p>
+        <p>Dirección de red: ${integerToIp(startAddressInt)}</p>
+        <p>Broadcast: ${integerToIp(startAddressInt + totalHosts - 1)}</p>
         ${tabla}
     `;
+}
+
+// Convierte una dirección IP en entero
+function ipToInteger(ip) {
+    return ip.reduce((acc, octet) => (acc << 8) | octet, 0);
+}
+
+// Convierte un entero a dirección IP
+function integerToIp(integer) {
+    return [
+        (integer >>> 24) & 255,
+        (integer >>> 16) & 255,
+        (integer >>> 8) & 255,
+        integer & 255,
+    ].join(".");
 }
 
 // Identifica la clase de IP
