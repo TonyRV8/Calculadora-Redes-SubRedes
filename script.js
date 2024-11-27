@@ -1,71 +1,87 @@
 function calcular() {
-    const input = document.getElementById("ip").value;
+    const ipInput = document.getElementById("ip").value;
+    const maskInput = parseInt(document.getElementById("mask").value, 10);
+    const subnetMaskInput = parseInt(document.getElementById("subnetMask").value, 10) || null;
     const resultados = document.getElementById("resultados");
     resultados.innerHTML = "";
 
-    if (!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(input)) {
-        resultados.innerHTML = "<p style='color: red;'>Formato inválido. Por favor, usa algo como 192.168.100.25/30</p>";
+    // Validaciones
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ipInput)) {
+        resultados.innerHTML = "<p style='color: red;'>Formato de dirección IP inválido.</p>";
+        return;
+    }
+    if (maskInput < 0 || maskInput > 32) {
+        resultados.innerHTML = "<p style='color: red;'>La máscara debe estar entre 0 y 32 bits.</p>";
+        return;
+    }
+    if (subnetMaskInput && (subnetMaskInput <= maskInput || subnetMaskInput > 32)) {
+        resultados.innerHTML = "<p style='color: red;'>La nueva máscara debe ser mayor a la máscara actual y no puede exceder 32 bits.</p>";
         return;
     }
 
-    const [ip, maskBits] = input.split("/");
-    const maskInt = parseInt(maskBits, 10);
+    const ipParts = ipInput.split(".").map(Number);
+    const maskBits = subnetMaskInput || maskInput;
 
-    if (maskInt < 0 || maskInt > 32) {
-        resultados.innerHTML = "<p style='color: red;'>Máscara inválida. Debe estar entre 0 y 32.</p>";
-        return;
-    }
-
-    const ipParts = ip.split(".").map(Number);
-    if (ipParts.some(part => part < 0 || part > 255)) {
-        resultados.innerHTML = "<p style='color: red;'>Dirección IP inválida.</p>";
-        return;
-    }
-
-    // Máscara de subred
-    const subnetMask = Array(32).fill(0).fill(1, 0, maskInt).join("").match(/.{1,8}/g).map(bin => parseInt(bin, 2));
+    // Cálculo de la máscara de subred
+    const subnetMask = Array(32).fill(0).fill(1, 0, maskBits).join("").match(/.{1,8}/g).map(bin => parseInt(bin, 2));
     const subnetMaskString = subnetMask.join(".");
+    const totalHosts = Math.pow(2, 32 - maskBits);
+    const usableHosts = totalHosts > 2 ? totalHosts - 2 : 0;
 
-    // Hosts totales, usable hosts y salto entre subredes
-    const totalHosts = Math.pow(2, 32 - maskInt);
-    const usableHosts = totalHosts > 2 ? totalHosts - 2 : 0; // Restar 2 si hay más de 2 hosts posibles
-    const subnetSize = totalHosts;
-
-    // Número de subredes
-    const numSubnets = Math.pow(2, maskInt % 8); // Número de subredes dentro del rango
-    const subnets = [];
-
-    // Calcular dirección de red base
-    const startAddressInt = ipToInteger(ipParts);
-
-    // Calcular todas las subredes
-    for (let i = 0; i < numSubnets; i++) {
-        const subnetStartInt = startAddressInt + i * subnetSize;
-        const subnetBroadcastInt = subnetStartInt + subnetSize - 1;
-
-        subnets.push({
-            start: integerToIp(subnetStartInt),
-            broadcast: integerToIp(subnetBroadcastInt),
-        });
-    }
-
-    // Crear tabla de subredes
-    let tabla = "<table><thead><tr><th>Subred</th><th>Broadcast</th></tr></thead><tbody>";
-    subnets.forEach(({ start, broadcast }) => {
-        tabla += `<tr><td>${start}</td><td>${broadcast}</td></tr>`;
-    });
-    tabla += "</tbody></table>";
+    const networkBase = ipParts.map((part, i) => part & subnetMask[i]);
+    const broadcast = networkBase.map((part, i) => part | ~subnetMask[i] & 255);
+    const hostMin = [...networkBase];
+    hostMin[3] += 1;
+    const hostMax = [...broadcast];
+    hostMax[3] -= 1;
 
     resultados.innerHTML = `
-        <p>Clase: ${determineClass(ipParts[0])}</p>
-        <p>Máscara de subred: ${subnetMaskString}</p>
-        <p>Hosts totales: ${totalHosts}</p>
-        <p>Hosts utilizables: ${usableHosts}</p>
-        <p>Número de subredes: ${numSubnets}</p>
-        <p>Dirección de red: ${integerToIp(startAddressInt)}</p>
-        <p>Broadcast: ${integerToIp(startAddressInt + totalHosts - 1)}</p>
-        ${tabla}
+        <p><strong>Dirección IP:</strong> ${ipInput}</p>
+        <p><strong>Máscara:</strong> ${subnetMaskString} (${maskBits} bits)</p>
+        <p><strong>Hosts totales:</strong> ${totalHosts}</p>
+        <p><strong>Hosts utilizables:</strong> ${usableHosts}</p>
+        <p><strong>Rango de direcciones:</strong> ${networkBase.join(".")} - ${broadcast.join(".")}</p>
+        <p><strong>Host mínimo:</strong> ${hostMin.join(".")}</p>
+        <p><strong>Host máximo:</strong> ${hostMax.join(".")}</p>
+        <p><strong>Broadcast:</strong> ${broadcast.join(".")}</p>
     `;
+
+    // Subneteo adicional
+    if (subnetMaskInput) {
+        resultados.innerHTML += "<h3>Subredes:</h3>";
+        const subnets = [];
+        const subnetSize = Math.pow(2, 32 - subnetMaskInput);
+        const startAddressInt = ipToInteger(networkBase);
+
+        for (let i = 0; i < Math.pow(2, subnetMaskInput - maskInput); i++) {
+            const subnetStartInt = startAddressInt + i * subnetSize;
+            const subnetBroadcastInt = subnetStartInt + subnetSize - 1;
+            const subnetStart = integerToIp(subnetStartInt);
+            const subnetBroadcast = integerToIp(subnetBroadcastInt);
+
+            const subnetHostMin = integerToIp(subnetStartInt + 1);
+            const subnetHostMax = integerToIp(subnetBroadcastInt - 1);
+
+            subnets.push({
+                start: subnetStart,
+                broadcast: subnetBroadcast,
+                hostMin: subnetHostMin,
+                hostMax: subnetHostMax,
+            });
+        }
+
+        let tabla = "<table><thead><tr><th>Subred</th><th>Host mínimo</th><th>Host máximo</th><th>Broadcast</th></tr></thead><tbody>";
+        subnets.forEach(({ start, hostMin, hostMax, broadcast }) => {
+            tabla += `<tr>
+                        <td>${start}</td>
+                        <td>${hostMin}</td>
+                        <td>${hostMax}</td>
+                        <td>${broadcast}</td>
+                      </tr>`;
+        });
+        tabla += "</tbody></table>";
+        resultados.innerHTML += tabla;
+    }
 }
 
 // Convierte una dirección IP en entero
@@ -81,13 +97,4 @@ function integerToIp(integer) {
         (integer >>> 8) & 255,
         integer & 255,
     ].join(".");
-}
-
-// Identifica la clase de IP
-function determineClass(firstOctet) {
-    if (firstOctet >= 0 && firstOctet <= 127) return "A";
-    if (firstOctet >= 128 && firstOctet <= 191) return "B";
-    if (firstOctet >= 192 && firstOctet <= 223) return "C";
-    if (firstOctet >= 224 && firstOctet <= 239) return "D (Multicast)";
-    return "E (Reservada)";
 }
